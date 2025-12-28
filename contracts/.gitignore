@@ -1,0 +1,40 @@
+# Environment variables (contains private keys!)
+.env
+.env.local
+
+# Hardhat files
+cache/
+artifacts/
+typechain-types/
+
+# Node modules
+node_modules/
+
+# Coverage reports
+coverage/
+coverage.json
+
+# Build files
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hardhat Ignition deployments
+ignition/deployments/
+
+# TypeScript
+*.tsbuildinfo
