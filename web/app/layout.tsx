@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "react-hot-toast";
-import Providers from "@/providers/privyProvider";
+import PrivyProviders from "@/providers/PrivyProviders";
 import "@/lib/suppressPrivyWarnings";
 
 const inter = Inter({
@@ -23,10 +23,10 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} antialiased`} suppressHydrationWarning>
-        <Providers>
+        <PrivyProviders>
           {children}
           <Toaster position="top-right" />
-        </Providers>
+        </PrivyProviders>
       </body>
     </html>
   );
