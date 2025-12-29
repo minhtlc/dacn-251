@@ -1,276 +1,451 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Search,
   Eye,
-  Edit,
-  Trash2,
+  RefreshCw,
   ChevronLeft,
   ChevronRight,
-  Filter,
+  Loader2,
+  ShieldX,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  ExternalLink,
+  Copy,
+  Wallet,
+  FileText,
 } from "lucide-react";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import type { Address } from "viem";
+import { IssuerCertificateItem, getCertificatesIssuedByMe } from "@/lib/issuerCertificatesByLogs";
+import { revokeCertificate } from "@/lib/revoke";
+import toast from "react-hot-toast";
 
-// Mock data for certificates
-const mockCertificates = [
-  {
-    id: 1,
-    fullName: "Nguyễn Văn An",
-    certificateNumber: "VB-2024-001",
-    major: "Công nghệ thông tin",
-    batch: "2024-Q4",
-    status: "pending",
-    createdAt: "2024-12-20",
-  },
-  {
-    id: 2,
-    fullName: "Trần Thị Bình",
-    certificateNumber: "VB-2024-002",
-    major: "Quản trị kinh doanh",
-    batch: "2024-Q4",
-    status: "approved",
-    createdAt: "2024-12-19",
-  },
-  {
-    id: 3,
-    fullName: "Lê Hoàng Cường",
-    certificateNumber: "VB-2024-003",
-    major: "Kỹ thuật điện tử",
-    batch: "2024-Q3",
-    status: "rejected",
-    createdAt: "2024-12-18",
-  },
-  {
-    id: 4,
-    fullName: "Phạm Minh Đức",
-    certificateNumber: "VB-2024-004",
-    major: "Công nghệ thông tin",
-    batch: "2024-Q4",
-    status: "draft",
-    createdAt: "2024-12-17",
-  },
-  {
-    id: 5,
-    fullName: "Hoàng Thị Em",
-    certificateNumber: "VB-2024-005",
-    major: "Kinh tế",
-    batch: "2024-Q3",
-    status: "approved",
-    createdAt: "2024-12-16",
-  },
-];
-
-const statusOptions = [
-  { value: "all", label: "Tất cả trạng thái" },
-  { value: "draft", label: "Bản nháp" },
-  { value: "pending", label: "Chờ duyệt" },
-  { value: "approved", label: "Đã duyệt" },
-  { value: "rejected", label: "Từ chối" },
-];
-
-const batchOptions = [
-  { value: "all", label: "Tất cả đợt cấp" },
-  { value: "2024-q4", label: "2024-Q4" },
-  { value: "2024-q3", label: "2024-Q3" },
-  { value: "2024-q2", label: "2024-Q2" },
-];
+type Filter = "ALL" | "ACTIVE" | "REVOKED" | "INVALID";
 
 const getStatusBadge = (status: string) => {
   switch (status) {
-    case "draft":
-      return <Badge variant="secondary">Bản nháp</Badge>;
-    case "pending":
-      return <Badge variant="warning">Chờ duyệt</Badge>;
-    case "approved":
-      return <Badge variant="success">Đã duyệt</Badge>;
-    case "rejected":
-      return <Badge variant="destructive">Từ chối</Badge>;
+    case "ACTIVE":
+      return (
+        <Badge variant="success" className="gap-1">
+          <CheckCircle className="h-3 w-3" />
+          Hoạt động
+        </Badge>
+      );
+    case "REVOKED":
+      return (
+        <Badge variant="warning" className="gap-1">
+          <XCircle className="h-3 w-3" />
+          Đã thu hồi
+        </Badge>
+      );
+    case "INVALID":
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Không hợp lệ
+        </Badge>
+      );
     default:
       return <Badge>{status}</Badge>;
   }
 };
 
 export default function CertificateStatusPage() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [batchFilter, setBatchFilter] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const { ready, authenticated, login, user } = usePrivy();
+  const { wallets } = useWallets();
+  const activeWallet = wallets?.[0];
 
-  const filteredCertificates = mockCertificates.filter((cert) => {
-    const matchesSearch =
-      cert.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      cert.certificateNumber.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === "all" || cert.status === statusFilter;
-    const matchesBatch =
-      batchFilter === "all" ||
-      cert.batch.toLowerCase().replace("-", "-") === batchFilter;
-    return matchesSearch && matchesStatus && matchesBatch;
-  });
+  const issuer = (user?.wallet?.address as Address | undefined) ?? undefined;
+
+  const [items, setItems] = useState<IssuerCertificateItem[]>([]);
+  const [filter, setFilter] = useState<Filter>("ALL");
+  const [loading, setLoading] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    if (filter === "ALL") return items;
+    return items.filter((x) => x.status === filter);
+  }, [items, filter]);
+
+  // Stats
+  const stats = useMemo(() => {
+    return {
+      total: items.length,
+      active: items.filter((x) => x.status === "ACTIVE").length,
+      revoked: items.filter((x) => x.status === "REVOKED").length,
+      invalid: items.filter((x) => x.status === "INVALID").length,
+    };
+  }, [items]);
+
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    toast.success("Đã sao chép!");
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  async function loadCertificates() {
+    setLoading(true);
+    toast.loading("Đang tải danh sách văn bằng...", { id: "load-certs" });
+
+    try {
+      if (!authenticated) throw new Error("Vui lòng đăng nhập");
+      if (!issuer) throw new Error("Không tìm thấy địa chỉ ví");
+
+      const list = await getCertificatesIssuedByMe(issuer, 50);
+      setItems(list);
+      toast.success(`Đã tải ${list.length} văn bằng`, { id: "load-certs" });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(message, { id: "load-certs" });
+      console.error("loadCertificates error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRevoke(tokenId: string) {
+    setRevoking(tokenId);
+    toast.loading("Đang thu hồi văn bằng...", { id: `revoke-${tokenId}` });
+
+    try {
+      if (!authenticated) throw new Error("Vui lòng đăng nhập");
+      if (!activeWallet) throw new Error("Không tìm thấy ví");
+
+      const { txHash } = await revokeCertificate({
+        wallet: activeWallet as { getEthereumProvider: () => Promise<unknown> },
+        tokenId: BigInt(tokenId),
+      });
+
+      toast.success(`Đã thu hồi văn bằng #${tokenId}`, { id: `revoke-${tokenId}` });
+      console.log("Revoke tx:", txHash);
+
+      // Update local state
+      setItems((prev) =>
+        prev.map((x) =>
+          x.tokenId === tokenId ? { ...x, revoked: true, status: "REVOKED" as const } : x
+        )
+      );
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(message, { id: `revoke-${tokenId}` });
+      console.error("handleRevoke error:", e);
+    } finally {
+      setRevoking(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="animate-fade-in">
-        <h1 className="text-2xl font-bold text-foreground">Trạng thái văn bằng</h1>
+        <h1 className="text-2xl font-bold text-foreground">Quản lý văn bằng đã phát hành</h1>
         <p className="text-muted-foreground">
-          Xem và quản lý trạng thái các văn bằng đã nhập
+          Xem và quản lý các văn bằng đã phát hành trên blockchain
         </p>
       </div>
 
-      {/* Filters */}
+      {/* Connection Status */}
       <Card className="animate-fade-in">
         <CardContent className="p-4">
-          <div className="flex flex-wrap gap-4">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Tìm theo họ tên hoặc số hiệu..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                <Wallet className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                {!ready ? (
+                  <p className="text-sm text-muted-foreground">Đang tải...</p>
+                ) : !authenticated ? (
+                  <p className="text-sm text-muted-foreground">Chưa kết nối ví</p>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">Đã kết nối</p>
+                    <p className="text-xs font-mono text-muted-foreground">
+                      {user?.wallet?.address?.slice(0, 10)}...{user?.wallet?.address?.slice(-8)}
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Trạng thái" />
-              </SelectTrigger>
-              <SelectContent>
-                {statusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={batchFilter} onValueChange={setBatchFilter}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Đợt cấp" />
-              </SelectTrigger>
-              <SelectContent>
-                {batchOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex gap-2">
+              {!authenticated && ready ? (
+                <Button onClick={login} className="gap-2">
+                  <Wallet className="h-4 w-4" />
+                  Kết nối ví
+                </Button>
+              ) : (
+                <Button onClick={loadCertificates} disabled={loading || !authenticated} className="gap-2">
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Tải danh sách
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Table */}
-      <Card className="animate-fade-in-delay-1">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border bg-muted/50">
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    STT
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Họ và tên
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Số hiệu văn bằng
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Ngành
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Đợt cấp
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Trạng thái
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                    Ngày tạo
-                  </th>
-                  <th className="px-6 py-4 text-center text-sm font-medium text-muted-foreground">
-                    Thao tác
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCertificates.map((cert, index) => (
-                  <tr
-                    key={cert.id}
-                    className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                  >
-                    <td className="px-6 py-4 text-sm text-foreground">
-                      {index + 1}
-                    </td>
-                    <td className="px-6 py-4 text-sm font-medium text-foreground">
-                      {cert.fullName}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-foreground">
-                      {cert.certificateNumber}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-foreground">
-                      {cert.major}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-foreground">
-                      {cert.batch}
-                    </td>
-                    <td className="px-6 py-4">{getStatusBadge(cert.status)}</td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground">
-                      {cert.createdAt}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-center gap-2">
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {/* Stats Cards */}
+      {items.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-4 animate-fade-in-delay-1">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                  <FileText className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{stats.total}</p>
+                  <p className="text-xs text-muted-foreground">Tổng số</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
+                  <CheckCircle className="h-5 w-5 text-success" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-success">{stats.active}</p>
+                  <p className="text-xs text-muted-foreground">Hoạt động</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
+                  <XCircle className="h-5 w-5 text-warning" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-warning">{stats.revoked}</p>
+                  <p className="text-xs text-muted-foreground">Đã thu hồi</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-destructive/10">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-destructive">{stats.invalid}</p>
+                  <p className="text-xs text-muted-foreground">Không hợp lệ</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-sm text-muted-foreground">
-              Hiển thị {filteredCertificates.length} kết quả
-            </p>
+      {/* Filters */}
+      {items.length > 0 && (
+        <Card className="animate-fade-in-delay-1">
+          <CardContent className="p-4">
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" disabled>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="sm" className="min-w-[40px]">
-                1
-              </Button>
-              <Button variant="outline" size="icon" disabled>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+              <span className="text-sm font-medium text-muted-foreground">Lọc:</span>
+              {(["ALL", "ACTIVE", "REVOKED", "INVALID"] as Filter[]).map((f) => (
+                <Button
+                  key={f}
+                  variant={filter === f ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilter(f)}
+                  className="gap-1"
+                >
+                  {f === "ALL" && "Tất cả"}
+                  {f === "ACTIVE" && (
+                    <>
+                      <CheckCircle className="h-3 w-3" />
+                      Hoạt động
+                    </>
+                  )}
+                  {f === "REVOKED" && (
+                    <>
+                      <XCircle className="h-3 w-3" />
+                      Thu hồi
+                    </>
+                  )}
+                  {f === "INVALID" && (
+                    <>
+                      <AlertTriangle className="h-3 w-3" />
+                      Không hợp lệ
+                    </>
+                  )}
+                  {f !== "ALL" && (
+                    <span className="ml-1 text-xs opacity-70">
+                      ({f === "ACTIVE" ? stats.active : f === "REVOKED" ? stats.revoked : stats.invalid})
+                    </span>
+                  )}
+                </Button>
+              ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Certificates List */}
+      {filtered.length > 0 ? (
+        <div className="space-y-4 animate-fade-in-delay-2">
+          {filtered.map((cert) => (
+            <Card key={cert.tokenId} className="overflow-hidden">
+              <CardContent className="p-0">
+                <div className="flex items-center justify-between p-4 border-b border-border">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted font-mono text-lg font-bold">
+                      #{cert.tokenId}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground">
+                        {cert.metadata?.name || `Văn bằng #${cert.tokenId}`}
+                      </h3>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <span>Người nhận: {cert.to.slice(0, 8)}...{cert.to.slice(-6)}</span>
+                        <span>•</span>
+                        <span>{cert.metadata?.issuedDate || new Date(cert.issuedAt * 1000).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {getStatusBadge(cert.status)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setExpandedItem(expandedItem === cert.tokenId ? null : cert.tokenId)}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={cert.status === "REVOKED" || revoking !== null}
+                      onClick={() => handleRevoke(cert.tokenId)}
+                      className="gap-1"
+                    >
+                      {revoking === cert.tokenId ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ShieldX className="h-4 w-4" />
+                      )}
+                      Thu hồi
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Expanded Details */}
+                {expandedItem === cert.tokenId && (
+                  <div className="p-4 bg-muted/30 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {/* Student Info */}
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-foreground">Thông tin sinh viên</h4>
+                        <div className="text-sm space-y-1">
+                          <p><span className="text-muted-foreground">Tên:</span> {cert.metadata?.student?.name || "N/A"}</p>
+                          <p><span className="text-muted-foreground">MSSV:</span> {cert.metadata?.student?.id || "N/A"}</p>
+                          <p>
+                            <span className="text-muted-foreground">Ví:</span>{" "}
+                            <span className="font-mono text-xs">{cert.to.slice(0, 12)}...{cert.to.slice(-8)}</span>
+                            <button onClick={() => handleCopy(cert.to, `to-${cert.tokenId}`)} className="ml-1 p-0.5 hover:bg-muted rounded">
+                              <Copy className={`h-3 w-3 ${copiedField === `to-${cert.tokenId}` ? 'text-success' : 'text-muted-foreground'}`} />
+                            </button>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Certificate Info */}
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-foreground">Thông tin văn bằng</h4>
+                        <div className="text-sm space-y-1">
+                          <p><span className="text-muted-foreground">Loại:</span> {cert.metadata?.type || "N/A"}</p>
+                          <p><span className="text-muted-foreground">Chuyên ngành:</span> {cert.metadata?.specialization || "N/A"}</p>
+                          <p><span className="text-muted-foreground">Nơi cấp:</span> {cert.metadata?.issuedBy || "N/A"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Blockchain Info */}
+                    <div className="pt-3 border-t border-border">
+                      <h4 className="text-sm font-semibold text-foreground mb-2">Thông tin blockchain</h4>
+                      <div className="text-sm space-y-1">
+                        <p className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Token URI:</span>
+                          <span className="font-mono text-xs truncate max-w-[300px]">{cert.tokenURI}</span>
+                          <a href={cert.tokenURI} target="_blank" rel="noopener noreferrer" className="p-0.5 hover:bg-muted rounded">
+                            <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                          </a>
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Hash on-chain:</span>{" "}
+                          <span className="font-mono text-xs">{cert.onchainMetadataHash.slice(0, 16)}...{cert.onchainMetadataHash.slice(-8)}</span>
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Hash tính toán:</span>{" "}
+                          <span className="font-mono text-xs">{cert.computedMetadataHash.slice(0, 16)}...{cert.computedMetadataHash.slice(-8)}</span>
+                          {cert.onchainMetadataHash === cert.computedMetadataHash ? (
+                            <CheckCircle className="inline h-3 w-3 text-success ml-1" />
+                          ) : (
+                            <XCircle className="inline h-3 w-3 text-destructive ml-1" />
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : items.length === 0 && !loading && authenticated ? (
+        <Card className="animate-fade-in-delay-2">
+          <CardContent className="p-8 text-center">
+            <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">Chưa có văn bằng</h3>
+            <p className="text-muted-foreground mb-4">
+              Nhấn &quot;Tải danh sách&quot; để xem các văn bằng bạn đã phát hành
+            </p>
+            <Button onClick={loadCertificates} disabled={loading} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Tải danh sách
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Pagination placeholder */}
+      {filtered.length > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Hiển thị {filtered.length} / {items.length} văn bằng
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" disabled>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="sm" className="min-w-[40px]">
+              1
+            </Button>
+            <Button variant="outline" size="icon" disabled>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }
-

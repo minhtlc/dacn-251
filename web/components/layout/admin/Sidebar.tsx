@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { checkUserRole, UserRole } from "@/lib/roles";
 import {
   LayoutDashboard,
   FileInput,
@@ -12,12 +14,16 @@ import {
   ChevronDown,
   FileText,
   Shield,
+  ShieldCheck,
+  Loader2,
 } from "lucide-react";
 
 interface NavItem {
   title: string;
   href?: string;
   icon: React.ElementType;
+  requiresAdmin?: boolean; // Only show for admin users
+  requiresIssuer?: boolean; // Only show for issuer users
   children?: {
     title: string;
     href: string;
@@ -34,10 +40,12 @@ const navItems: NavItem[] = [
     title: "Phân quyền phát hành",
     href: "/admin/batches",
     icon: Shield,
+    requiresAdmin: true, // Only admins can manage roles
   },
   {
     title: "Nhập văn bằng",
     icon: FileInput,
+    requiresIssuer: true, // Issuers can create certificates
     children: [
       {
         title: "Thêm mới một văn bằng",
@@ -54,9 +62,10 @@ const navItems: NavItem[] = [
     ],
   },
   {
-    title: "Trạng thái văn bằng",
+    title: "Quản lý & Thu hồi",
     href: "/admin/certificates/status",
     icon: ClipboardList,
+    requiresIssuer: true, // Issuers can manage/revoke their certificates
   },
   {
     title: "Hướng dẫn / Mẫu Excel",
@@ -68,6 +77,36 @@ const navItems: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [expandedItems, setExpandedItems] = useState<string[]>(["Nhập văn bằng"]);
+  const [userRole, setUserRole] = useState<UserRole | null>(null);
+  const [loadingRole, setLoadingRole] = useState(true);
+
+  const { authenticated } = usePrivy();
+  const { wallets } = useWallets();
+
+  // Check user role on mount and when wallet changes
+  useEffect(() => {
+    async function fetchRole() {
+      if (!authenticated || !wallets || wallets.length === 0) {
+        setUserRole(null);
+        setLoadingRole(false);
+        return;
+      }
+
+      setLoadingRole(true);
+      try {
+        const activeWallet = wallets[0];
+        const role = await checkUserRole(activeWallet as { getEthereumProvider: () => Promise<unknown> });
+        setUserRole(role);
+      } catch (error) {
+        console.error("Error checking role:", error);
+        setUserRole(null);
+      } finally {
+        setLoadingRole(false);
+      }
+    }
+
+    fetchRole();
+  }, [authenticated, wallets]);
 
   const toggleExpand = (title: string) => {
     setExpandedItems((prev) =>
@@ -91,6 +130,19 @@ export default function Sidebar() {
     return false;
   };
 
+  // Filter nav items based on user role
+  const filteredNavItems = navItems.filter((item) => {
+    // If requires admin and user is not admin, hide
+    if (item.requiresAdmin && !userRole?.isAdmin) {
+      return false;
+    }
+    // If requires issuer and user is not issuer, hide
+    if (item.requiresIssuer && !userRole?.isIssuer) {
+      return false;
+    }
+    return true;
+  });
+
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-sidebar-border bg-sidebar">
       {/* Logo */}
@@ -99,15 +151,49 @@ export default function Sidebar() {
           <FileText className="h-5 w-5" />
         </div>
         <div className="flex flex-col">
-          <span className="text-sm font-semibold text-foreground">Data Entry</span>
-          <span className="text-xs text-muted-foreground">Certificate Management</span>
+          <span className="text-sm font-semibold text-foreground">CertifyChain</span>
+          <span className="text-xs text-muted-foreground">Admin Dashboard</span>
         </div>
+      </div>
+
+      {/* Role Badge */}
+      <div className="px-3 py-3 border-b border-sidebar-border">
+        {loadingRole ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Đang kiểm tra quyền...</span>
+          </div>
+        ) : userRole ? (
+          <div className="space-y-1">
+            {userRole.isAdmin && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10">
+                <ShieldCheck className="h-4 w-4 text-blue-600" />
+                <span className="text-xs font-medium text-blue-600">Admin</span>
+              </div>
+            )}
+            {userRole.isIssuer && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10">
+                <Shield className="h-4 w-4 text-emerald-600" />
+                <span className="text-xs font-medium text-emerald-600">Issuer</span>
+              </div>
+            )}
+            {!userRole.isAdmin && !userRole.isIssuer && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted">
+                <span className="text-xs text-muted-foreground">Không có quyền</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50">
+            <span className="text-xs text-muted-foreground">Chưa kết nối ví</span>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-1">
-          {navItems.map((item) => (
+          {filteredNavItems.map((item) => (
             <li key={item.title}>
               {item.children ? (
                 <div>
@@ -170,7 +256,18 @@ export default function Sidebar() {
           ))}
         </ul>
       </nav>
+
+      {/* Wallet Address */}
+      {userRole?.walletAddress && (
+        <div className="px-3 py-3 border-t border-sidebar-border">
+          <div className="px-3 py-2 rounded-lg bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-1">Ví đang kết nối</p>
+            <p className="text-xs font-mono text-foreground">
+              {userRole.walletAddress.slice(0, 8)}...{userRole.walletAddress.slice(-6)}
+            </p>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
-

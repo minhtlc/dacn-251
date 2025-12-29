@@ -13,9 +13,168 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Save, X, Wallet, Loader2 } from "lucide-react";
+import { Save, X, Wallet, Loader2, ExternalLink, Eye, Copy, CheckCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import { mintCertificate } from "@/lib/mint";
+
+// Component to show minted certificate details with links
+function MintedCertificateDetails({ minted, contractAddress }: { minted: MintedData; contractAddress: string }) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    toast.success('Copied to clipboard!');
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const sepoliaBaseUrl = 'https://sepolia.etherscan.io';
+  const txUrl = `${sepoliaBaseUrl}/tx/${minted.txHash}`;
+  const tokenUrl = contractAddress ? `${sepoliaBaseUrl}/token/${contractAddress}?a=${minted.tokenId}` : null;
+  const contractUrl = contractAddress ? `${sepoliaBaseUrl}/address/${contractAddress}` : null;
+  const verifyUrl = `/verify?tokenId=${minted.tokenId}`;
+
+  return (
+    <div className="mt-4 p-4 bg-green-50 border-2 border-green-300 rounded-lg">
+      {/* Success Header */}
+      <div className="flex items-center gap-2 mb-4">
+        <CheckCircle className="h-6 w-6 text-green-600" />
+        <span className="text-lg font-bold text-green-700">Certificate Minted Successfully!</span>
+      </div>
+
+      {/* Token ID - Prominent Display */}
+      <div className="mb-4 p-3 bg-white rounded-lg border border-green-200">
+        <div className="text-sm text-gray-500 mb-1">Token ID</div>
+        <div className="flex items-center justify-between">
+          <span className="text-2xl font-bold text-green-700">#{minted.tokenId}</span>
+          <button
+            onClick={() => handleCopy(minted.tokenId || '', 'tokenId')}
+            className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+            title="Copy Token ID"
+          >
+            <Copy className={`h-4 w-4 ${copiedField === 'tokenId' ? 'text-green-600' : 'text-gray-500'}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Links Grid */}
+      <div className="grid gap-3">
+        {/* Transaction Hash */}
+        <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-200">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-gray-500">Transaction Hash</div>
+            <div className="text-sm font-mono truncate">{minted.txHash.slice(0, 16)}...{minted.txHash.slice(-12)}</div>
+          </div>
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => handleCopy(minted.txHash, 'txHash')}
+              className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+              title="Copy"
+            >
+              <Copy className={`h-4 w-4 ${copiedField === 'txHash' ? 'text-green-600' : 'text-gray-500'}`} />
+            </button>
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+              title="View on Sepolia Etherscan"
+            >
+              <ExternalLink className="h-4 w-4 text-blue-600" />
+            </a>
+          </div>
+        </div>
+
+        {/* Token URI (IPFS) */}
+        <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-200">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-gray-500">Token URI (IPFS)</div>
+            <div className="text-sm font-mono truncate">{minted.tokenURI}</div>
+          </div>
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => handleCopy(minted.tokenURI, 'tokenURI')}
+              className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+              title="Copy"
+            >
+              <Copy className={`h-4 w-4 ${copiedField === 'tokenURI' ? 'text-green-600' : 'text-gray-500'}`} />
+            </button>
+            <a
+              href={minted.tokenURI}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+              title="View Metadata on IPFS"
+            >
+              <ExternalLink className="h-4 w-4 text-blue-600" />
+            </a>
+          </div>
+        </div>
+
+        {/* Contract Address (if available) */}
+        {contractUrl && (
+          <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-200">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-gray-500">Smart Contract</div>
+              <div className="text-sm font-mono truncate">{contractAddress.slice(0, 10)}...{contractAddress.slice(-8)}</div>
+            </div>
+            <div className="flex items-center gap-1 ml-2">
+              <button
+                onClick={() => handleCopy(contractAddress, 'contract')}
+                className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+                title="Copy"
+              >
+                <Copy className={`h-4 w-4 ${copiedField === 'contract' ? 'text-green-600' : 'text-gray-500'}`} />
+              </button>
+              <a
+                href={contractUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+                title="View Contract on Sepolia Etherscan"
+              >
+                <ExternalLink className="h-4 w-4 text-blue-600" />
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-green-200">
+        <a
+          href={txUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+        >
+          <ExternalLink className="h-4 w-4" />
+          View on Sepolia
+        </a>
+        {tokenUrl && (
+          <a
+            href={tokenUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+          >
+            <ExternalLink className="h-4 w-4" />
+            View Token
+          </a>
+        )}
+        <a
+          href={verifyUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+        >
+          <Eye className="h-4 w-4" />
+          Verify Certificate
+        </a>
+      </div>
+    </div>
+  );
+}
 
 // Certificate types for dropdown
 const certificateTypes = [
@@ -42,6 +201,9 @@ interface MintedData {
   metadataHash: string;
   metadataCid: string;
 }
+
+// Contract address for Sepolia links
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '';
 
 export default function AddCertificatePage() {
   const { authenticated, login } = usePrivy();
@@ -189,27 +351,11 @@ export default function AddCertificatePage() {
       setMinted(mintedData);
 
       toast.success(
-        `🎉 Certificate minted successfully!\n\nToken ID: ${tokenId}\nTx Hash: ${txHash.slice(0, 10)}...${txHash.slice(-8)}`,
-        { id: "minting", duration: 8000 }
+        `🎉 Certificate minted successfully! Token ID: #${tokenId}`,
+        { id: "minting", duration: 5000 }
       );
       console.log("✅ [Mint] Final minted data:", mintedData);
-      
-      // Reset form after successful mint
-      setTimeout(() => {
-        setFormData({
-          recipientWallet: "",
-          certificateType: "Bachelor",
-          certificateName: "",
-          specialization: "",
-          issuedBy: "",
-          issuedDate: "",
-          studentName: "",
-          studentId: "",
-        });
-        setPrepared(null);
-        setMinted(null);
-        console.log("🔄 [Mint] Form reset after successful mint");
-      }, 5000);
+      // Note: Form is NOT auto-reset so user can see the minted details
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       setMintError(errorMessage);
@@ -400,21 +546,18 @@ export default function AddCertificatePage() {
                   </Button>
                 </div>
                 {mintError && (
-                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                  <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                     {mintError}
                   </div>
                 )}
-                {prepared && (
-                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
-                    ✓ Prepared: {prepared.metadataCid}
+                {prepared && !minted && (
+                  <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                    <div className="font-semibold mb-1">✓ Metadata Prepared</div>
+                    <div className="text-xs font-mono">CID: {prepared.metadataCid}</div>
                   </div>
                 )}
                 {minted && (
-                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                    <div className="text-green-700 font-semibold">✓ Minted successfully!</div>
-                    <div className="mt-1 text-green-600">Token ID: {minted.tokenId}</div>
-                    <div className="text-green-600">Tx Hash: {minted.txHash}</div>
-                  </div>
+                  <MintedCertificateDetails minted={minted} contractAddress={CONTRACT_ADDRESS} />
                 )}
               </div>
             )}
