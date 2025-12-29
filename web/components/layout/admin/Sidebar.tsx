@@ -6,15 +6,12 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
-  FolderKanban,
   FileInput,
-  FilePlus,
-  FileSpreadsheet,
-  Search,
   ClipboardList,
   HelpCircle,
   ChevronDown,
   FileText,
+  Shield,
 } from "lucide-react";
 
 interface NavItem {
@@ -34,9 +31,9 @@ const navItems: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    title: "Quản lý đợt cấp văn bằng",
+    title: "Phân quyền phát hành",
     href: "/admin/batches",
-    icon: FolderKanban,
+    icon: Shield,
   },
   {
     title: "Nhập văn bằng",

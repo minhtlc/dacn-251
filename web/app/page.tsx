@@ -4,28 +4,19 @@ import { useState, useEffect, useRef } from 'react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { Homepage } from '@/components/Homepage';
-import { VerificationSearch } from '@/components/VerificationSearch';
 import { VerificationValid } from '@/components/VerificationValid';
 import { VerificationRevoked } from '@/components/VerificationRevoked';
+import { VerificationInvalid } from '@/components/VerificationInvalid';
 import { StudentDashboard } from '@/components/StudentDashboard';
+import { VerifyResult } from '@/lib/verify';
 
-type Page = 'home' | 'verify' | 'valid' | 'revoked' | 'about' | 'student-dashboard';
-
-interface VerificationData {
-  name: string;
-  serial: string;
-  date: string;
-}
+type Page = 'home' | 'valid' | 'revoked' | 'invalid' | 'not-found' | 'about' | 'student-dashboard';
 
 export default function Home() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userName, setUserName] = useState('');
-  const [verificationData, setVerificationData] = useState<VerificationData>({
-    name: '',
-    serial: '',
-    date: ''
-  });
+  const [verificationResult, setVerificationResult] = useState<VerifyResult | null>(null);
   // Use ref to track login state for back button handling
   const isLoggedInRef = useRef(false);
 
@@ -55,13 +46,28 @@ export default function Home() {
     setCurrentPage('home');
   };
 
-  const handleVerify = (data: VerificationData, status: 'valid' | 'revoked') => {
-    setVerificationData(data);
-    setCurrentPage(status);
+  const handleVerificationResult = (result: VerifyResult) => {
+    setVerificationResult(result);
+    
+    // Navigate based on status
+    switch (result.status) {
+      case 'VALID':
+        setCurrentPage('valid');
+        break;
+      case 'REVOKED':
+        setCurrentPage('revoked');
+        break;
+      case 'INVALID':
+      case 'NOT_FOUND':
+      case 'ERROR':
+        setCurrentPage('invalid');
+        break;
+    }
   };
 
   const handleBack = () => {
-    setCurrentPage('verify');
+    setCurrentPage('home');
+    setVerificationResult(null);
   };
 
   // Handle browser back button when logged in
@@ -106,10 +112,21 @@ export default function Home() {
         onLogout={handleLogout}
       />
       
-      {currentPage === 'home' && <Homepage onNavigate={handleNavigate} onLogin={handleLogin} onVerify={handleVerify} />}
-      {currentPage === 'verify' && <VerificationSearch onVerify={handleVerify} />}
-      {currentPage === 'valid' && <VerificationValid data={verificationData} onBack={handleBack} />}
-      {currentPage === 'revoked' && <VerificationRevoked data={verificationData} onBack={handleBack} />}
+      {currentPage === 'home' && (
+        <Homepage 
+          onLogin={handleLogin} 
+          onVerificationResult={handleVerificationResult} 
+        />
+      )}
+      {currentPage === 'valid' && verificationResult && (
+        <VerificationValid result={verificationResult} onBack={handleBack} />
+      )}
+      {currentPage === 'revoked' && verificationResult && (
+        <VerificationRevoked result={verificationResult} onBack={handleBack} />
+      )}
+      {currentPage === 'invalid' && verificationResult && (
+        <VerificationInvalid result={verificationResult} onBack={handleBack} />
+      )}
       {currentPage === 'about' && (
         <div className="flex-1 py-16 px-6">
           <div className="max-w-4xl mx-auto">

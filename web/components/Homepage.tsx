@@ -1,27 +1,33 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { usePrivy } from '@privy-io/react-auth';
+import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Shield, Upload, Search, ArrowRight } from "lucide-react";
+import { Shield, Upload, Search, ArrowRight, Loader2 } from "lucide-react";
 import jsQR from "jsqr";
 import toast from "react-hot-toast";
+import { checkUserRole } from "@/lib/roles";
+import { verifyCertificate, VerifyResult } from "@/lib/verify";
 
 interface HomepageProps {
-  onNavigate: (page: string) => void;
   onLogin: (name: string, walletAddress?: string) => void;
-  onVerify?: (data: { name: string; serial: string; date: string }, status: 'valid' | 'revoked') => void;
+  onVerificationResult?: (result: VerifyResult) => void;
 }
 
-export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
+export function Homepage({ onLogin, onVerificationResult }: HomepageProps) {
   const [activeTab, setActiveTab] = useState<'verify' | 'student'>('verify');
   const [certificateId, setCertificateId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [checkingRole, setCheckingRole] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   
   // Privy hooks
   const { ready, authenticated, user, login, logout } = usePrivy();
+  const { wallets } = useWallets();
+  const router = useRouter();
 
   // Handle Privy login
   const handlePrivyLogin = async () => {
@@ -35,34 +41,118 @@ export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
 
   // Auto-redirect when user is authenticated
   useEffect(() => {
-    if (ready && authenticated && user) {
-      // Extract user information
-      const userName = user.google?.name || 
-                      user.email?.address || 
-                      user.discord?.username ||
-                      user.phone?.number ||
-                      `User ${user.id.slice(0, 8)}`;
+    if (ready && authenticated && user && wallets && wallets.length > 0 && !checkingRole) {
+      const checkRoleAndRedirect = async () => {
+        setCheckingRole(true);
+        try {
+          // Extract user information
+          const userName = user.google?.name || 
+                          user.email?.address || 
+                          user.discord?.username ||
+                          user.phone?.number ||
+                          `User ${user.id.slice(0, 8)}`;
+          
+          // Get wallet address from user's wallet or linked accounts
+          const walletAddress = user.wallet?.address || 
+                               (user.linkedAccounts?.find((acc) => 
+                                 acc.type === 'wallet' && 'address' in acc
+                               ) as { address?: string } | undefined)?.address;
+          
+          // Check user role
+          const activeWallet = wallets[0];
+          if (!activeWallet) {
+            throw new Error("No wallet found");
+          }
+          const role = await checkUserRole(activeWallet as { getEthereumProvider: () => Promise<unknown> });
+          
+          // Show success toast
+          toast.success('Successfully logged in!', {
+            duration: 3000,
+            icon: '✅',
+          });
+          
+          // Redirect based on role
+          if (role.isIssuer || role.isAdmin) {
+            // Admin/Issuer: redirect to admin dashboard
+            toast.success('Redirecting to admin dashboard...', {
+              duration: 2000,
+            });
+            router.push('/admin');
+          } else {
+            // Student: redirect to student dashboard
+            onLogin(userName, walletAddress);
+          }
+        } catch (error) {
+          console.error('Error checking role:', error);
+          // On error, default to student dashboard
+          const userName = user.google?.name || 
+                          user.email?.address || 
+                          user.discord?.username ||
+                          user.phone?.number ||
+                          `User ${user.id.slice(0, 8)}`;
+          const walletAddress = user.wallet?.address || 
+                               (user.linkedAccounts?.find((acc) => 
+                                 acc.type === 'wallet' && 'address' in acc
+                               ) as { address?: string } | undefined)?.address;
+          onLogin(userName, walletAddress);
+        } finally {
+          setCheckingRole(false);
+        }
+      };
       
-      // Get wallet address from user's wallet or linked accounts
-      const walletAddress = user.wallet?.address || 
-                           (user.linkedAccounts?.find((acc) => 
-                             acc.type === 'wallet' && 'address' in acc
-                           ) as { address?: string } | undefined)?.address;
-      
-      // Show success toast
-      toast.success('Successfully logged in!', {
-        duration: 3000,
-        icon: '✅',
-      });
-      
-      // Call onLogin with user data
-      onLogin(userName, walletAddress);
+      checkRoleAndRedirect();
     }
-  }, [ready, authenticated, user, onLogin]);
+  }, [ready, authenticated, user, wallets, onLogin, router, checkingRole]);
 
-  const handleVerify = () => {
-    if (certificateId.trim()) {
-      onNavigate('verify');
+  const handleVerify = async () => {
+    if (!certificateId.trim()) {
+      toast.error("Please enter a Certificate ID (Token ID)");
+      return;
+    }
+
+    // Validate that it's a valid number (token ID)
+    const tokenId = certificateId.trim();
+    if (!/^\d+$/.test(tokenId)) {
+      toast.error("Certificate ID must be a number (Token ID)");
+      return;
+    }
+
+    setVerifying(true);
+    toast.loading("Verifying certificate on blockchain...", { id: "verify" });
+    console.log("🔍 [Verify] Starting verification for tokenId:", tokenId);
+
+    try {
+      const result = await verifyCertificate(BigInt(tokenId));
+      console.log("📥 [Verify] Result:", result);
+
+      // Show appropriate toast based on result
+      switch (result.status) {
+        case "VALID":
+          toast.success("✅ Certificate is VALID!", { id: "verify", duration: 3000 });
+          break;
+        case "REVOKED":
+          toast.error("⚠️ Certificate has been REVOKED", { id: "verify", duration: 3000 });
+          break;
+        case "INVALID":
+          toast.error("❌ Certificate is INVALID (hash mismatch)", { id: "verify", duration: 3000 });
+          break;
+        case "NOT_FOUND":
+          toast.error("🔍 Certificate not found", { id: "verify", duration: 3000 });
+          break;
+        case "ERROR":
+          toast.error(`❌ Error: ${result.error}`, { id: "verify", duration: 3000 });
+          break;
+      }
+
+      // Navigate to result page
+      if (onVerificationResult) {
+        onVerificationResult(result);
+      }
+    } catch (error) {
+      console.error("❌ [Verify] Error:", error);
+      toast.error("Failed to verify certificate", { id: "verify" });
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -79,40 +169,6 @@ export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
       // Check if it's an image file
       if (!file.type.startsWith('image/')) {
         toast.error('Please select an image file.');
-        return;
-      }
-
-      // Check filename for test certificates (before smart contract integration)
-      const fileName = file.name.toLowerCase();
-      if (fileName === 'validqrcode.png') {
-        // Test: Valid certificate - navigate directly to valid page
-        toast.success('Valid certificate detected!', { duration: 2000 });
-        if (onVerify) {
-          const mockData = {
-            name: "John Doe",
-            serial: `VALID-TEST-${Date.now()}`,
-            date: "June 15, 2024"
-          };
-          setTimeout(() => {
-            onVerify(mockData, 'valid');
-          }, 500);
-        }
-        event.target.value = '';
-        return;
-      } else if (fileName === 'revokedqrcode.png') {
-        // Test: Revoked certificate - navigate directly to revoked page
-        toast.success('Revoked certificate detected!', { duration: 2000 });
-        if (onVerify) {
-          const mockData = {
-            name: "John Doe",
-            serial: `REVOKED-TEST-${Date.now()}`,
-            date: "June 15, 2024"
-          };
-          setTimeout(() => {
-            onVerify(mockData, 'revoked');
-          }, 500);
-        }
-        event.target.value = '';
         return;
       }
 
@@ -152,17 +208,60 @@ export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
             const qrCode = jsQR(imageData.data, imageData.width, imageData.height);
 
             if (qrCode) {
-              // QR code found - extract the data
-              const certificateData = qrCode.data;
-              console.log('QR Code detected:', certificateData);
+              // QR code found - extract the data (should be a token ID or URL with token ID)
+              const qrData = qrCode.data;
+              console.log('QR Code detected:', qrData);
 
-              // Show success message and navigate with certificate ID in URL
-              toast.success('QR Code successfully decoded!', { duration: 2000 });
+              // Extract token ID from QR data
+              // Could be just a number, or a URL like "https://example.com/verify?tokenId=123"
+              let tokenId: string | null = null;
               
-              // Navigate to verify page with certificate ID in URL
-              setTimeout(() => {
-                onNavigate(`verify?certificate=${encodeURIComponent(certificateData)}`);
-              }, 500);
+              // Try to extract tokenId from URL
+              if (qrData.includes('tokenId=')) {
+                const match = qrData.match(/tokenId=(\d+)/);
+                if (match) tokenId = match[1];
+              } else if (/^\d+$/.test(qrData.trim())) {
+                // Just a number
+                tokenId = qrData.trim();
+              }
+
+              if (tokenId) {
+                toast.success('QR Code detected! Verifying...', { duration: 2000 });
+                setCertificateId(tokenId);
+                
+                // Verify the certificate
+                setTimeout(async () => {
+                  setVerifying(true);
+                  toast.loading("Verifying certificate on blockchain...", { id: "verify-qr" });
+                  
+                  try {
+                    const result = await verifyCertificate(BigInt(tokenId));
+                    console.log("📥 [Verify QR] Result:", result);
+                    
+                    switch (result.status) {
+                      case "VALID":
+                        toast.success("✅ Certificate is VALID!", { id: "verify-qr" });
+                        break;
+                      case "REVOKED":
+                        toast.error("⚠️ Certificate has been REVOKED", { id: "verify-qr" });
+                        break;
+                      default:
+                        toast.error(`Certificate status: ${result.status}`, { id: "verify-qr" });
+                    }
+                    
+                    if (onVerificationResult) {
+                      onVerificationResult(result);
+                    }
+                  } catch (error) {
+                    console.error("❌ [Verify QR] Error:", error);
+                    toast.error("Failed to verify certificate", { id: "verify-qr" });
+                  } finally {
+                    setVerifying(false);
+                  }
+                }, 500);
+              } else {
+                toast.error('Invalid QR code format. Expected a Token ID.');
+              }
             } else {
               // No QR code found in the image
               toast.error('No QR code detected in the selected image. Please make sure the image contains a valid QR code and try again.');
@@ -285,26 +384,38 @@ export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
             <div className="space-y-4">
               <div>
                 <label htmlFor="certificateId" className="block text-sm font-medium text-gray-700 mb-2">
-                  Certificate ID / Serial Number
+                  Certificate ID (Token ID)
                 </label>
                 <Input
                   id="certificateId"
                   type="text"
-                  placeholder="Enter certificate ID or serial number"
+                  placeholder="Enter Token ID (e.g., 1, 2, 3...)"
                   value={certificateId}
                   onChange={(e) => setCertificateId(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
+                  onKeyDown={(e) => e.key === 'Enter' && !verifying && handleVerify()}
                   className="h-12"
+                  disabled={verifying}
                 />
               </div>
 
               {/* Verify Button */}
               <Button
                 onClick={handleVerify}
-                className="w-full h-12 text-base font-semibold rounded-lg"
+                className="w-full h-12 text-base font-semibold rounded-lg gap-2"
                 style={{ backgroundColor: '#0d6efd' }}
+                disabled={verifying}
               >
-                Verify Certificate
+                {verifying ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-5 w-5" />
+                    Verify Certificate
+                  </>
+                )}
               </Button>
             </div>
           </Card>
@@ -320,6 +431,10 @@ export function Homepage({ onNavigate, onLogin, onVerify }: HomepageProps) {
             {!ready ? (
               <div className="text-center py-8">
                 <p className="text-gray-500">Loading...</p>
+              </div>
+            ) : checkingRole ? (
+              <div className="text-center py-8">
+                <p className="text-gray-500">Checking permissions...</p>
               </div>
             ) : authenticated ? (
               <div className="text-center py-8 space-y-4">

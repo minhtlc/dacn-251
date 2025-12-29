@@ -30,14 +30,14 @@ export function Header({ onNavigate, currentPage, isLoggedIn, userName, onLogout
             >
               Home
             </button>
-            <button
+            {/* <button
               onClick={() => onNavigate('verify')}
               className={`text-sm font-medium transition-colors hover:text-primary ${
                 currentPage === 'verify' ? 'text-primary' : 'text-muted-foreground'
               }`}
             >
               Verify Certificate
-            </button>
+            </button> */}
             <button
               onClick={() => onNavigate('about')}
               className={`text-sm font-medium transition-colors hover:text-primary ${
